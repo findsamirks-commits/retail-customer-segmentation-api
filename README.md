@@ -16,7 +16,7 @@ graph TD
     F --> G[Instant Actionable Insights & Employee Workflows]
 ```
 
-##**📁 Repository Structure**
+**📁 Repository Structure**
 * customer_segmentation.ipynb — The complete interactive lab notebook detailing data simulation, RFM calculations, K-Means clustering, and model serialization.
 * app.py — The production FastAPI backend script that loads the trained scaler and K-Means model to classify customer profiles in real-time.
 * models/customer_segment_model.joblib — The serialized K-Means clustering model.
