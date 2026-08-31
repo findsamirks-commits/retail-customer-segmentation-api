@@ -1,20 +1,34 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 import joblib
 import pandas as pd
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+import logging
 
-# Initialize FastAPI app for internal retail tools
-app = FastAPI(title="Retail Customer Segmentation API", version="1.0")
+# Configure logging for production auditing
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-# Load the saved ML model and feature scaler
-model = joblib.load('models/customer_segment_model.joblib')
-scaler = joblib.load('models/rfm_scaler.joblib')
+# Initialize FastAPI app with comprehensive metadata
+app = FastAPI(
+    title="Retail Customer Segmentation API",
+    description="Enterprise backend service for automated RFM customer behavioral clustering and employee action routing.",
+    version="2.0"
+)
 
-# Define input structure expected from employees/dashboards
+# Load the saved ML model and feature scaler safely
+try:
+    model = joblib.load('models/customer_segment_model.joblib')
+    scaler = joblib.load('models/rfm_scaler.joblib')
+    logger.info("Machine learning model and scaler successfully loaded into memory.")
+except Exception as e:
+    logger.error(f"Failed to load model artifacts: {e}")
+    raise e
+
+# Enhanced Pydantic schema with validation constraints
 class CustomerInput(BaseModel):
-    recency: float      # Days since last purchase
-    frequency: float    # Total orders placed
-    monetary: float     # Total spend amount
+    recency: float = Field(..., ge=0, description="Days since last purchase (must be >= 0)")
+    frequency: float = Field(..., gt=0, description="Total orders placed (must be > 0)")
+    monetary: float = Field(..., ge=0, description="Total spend amount (must be >= 0)")
 
 # Dictionary mapping cluster numbers to clear business actions for staff
 CLUSTER_MEANINGS = {
@@ -26,27 +40,40 @@ CLUSTER_MEANINGS = {
 
 @app.get("/")
 def home():
-    return {"message": "Retail Customer Segmentation API is live! Use the /segment endpoint to analyze buyer behavior."}
+    return {
+        "status": "online",
+        "service": "Retail Customer Segmentation API",
+        "docs_url": "/docs"
+    }
 
 @app.post("/segment")
 def predict_segment(data: CustomerInput):
-    # Prepare input data frame
-    input_df = pd.DataFrame([{
-        'Recency': data.recency,
-        'Frequency': data.frequency,
-        'Monetary': data.monetary
-    }])
-    
-    # Scale input using our saved production scaler
-    scaled_input = scaler.transform(input_df)
-    
-    # Predict cluster
-    cluster_id = int(model.predict(scaled_input)[0])
-    segment_info = CLUSTER_MEANINGS.get(cluster_id, {"segment": "Unknown", "action": "Review manually."})
-    
-    return {
-        "input_metrics": data.dict(),
-        "assigned_cluster": cluster_id,
-        "customer_segment": segment_info["segment"],
-        "recommended_employee_action": segment_info["action"]
-    }
+    try:
+        # Prepare input dataframe
+        input_df = pd.DataFrame([{
+            'Recency': data.recency,
+            'Frequency': data.frequency,
+            'Monetary': data.monetary
+        }])
+        
+        # Scale input using our production scaler
+        scaled_input = scaler.transform(input_df)
+        
+        # Predict cluster
+        cluster_id = int(model.predict(scaled_input)[0])
+        segment_info = CLUSTER_MEANINGS.get(cluster_id, {"segment": "Unknown", "action": "Review manually."})
+        
+        # Log the prediction event
+        logger.info(f"Classified customer profile -> Segment: {segment_info['segment']} (Cluster ID: {cluster_id})")
+        
+        return {
+            "status": "success",
+            "input_metrics": data.dict(),
+            "assigned_cluster": cluster_id,
+            "customer_segment": segment_info["segment"],
+            "recommended_employee_action": segment_info["action"]
+        }
+        
+    except Exception as e:
+        logger.error(f"Error during segmentation inference: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
